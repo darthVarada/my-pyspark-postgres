@@ -43,76 +43,73 @@ O ambiente é composto por três containers Docker configurados via
 
 ------------------------------------------------------------------------
 
-## ⚙️ 1. Carga Completa (Batch)
+## 🚀 Instruções de Execução Completa
 
-### Arquivo: `src/full_load.py`
+### 1️⃣ Etapa 1 -- Executar o script do banco de dados
 
--   Conecta ao PostgreSQL (`db_loja.cliente`);
--   Lê todos os registros em um DataFrame Spark;
--   Grava em CSV no bucket `RAW/full/date=YYYYMMDD/`;
--   O nome do arquivo inclui um *timestamp* como *watermark* para
-    unicidade.
-
-**Exemplo de destino:**
-
-    RAW/full/date=20251103/full_clientes_20251103_101530.csv
-
-### Execução
-
-``` bash
-python src/full_load.py
-```
+Primeiro, execute o arquivo **`Script-DDL-dbloja.sql`** para criar o
+schema `db_loja` e todas as tabelas necessárias.\
+Esse passo garante que o banco esteja com a estrutura correta para as
+próximas etapas de ingestão.
 
 ------------------------------------------------------------------------
 
-## 🔁 2. Carga Incremental (CDC)
+### 2️⃣ Etapa 2 -- Criar a publicação e o slot de replicação
 
-### Arquivo: `src/cdc.py`
+Em seguida, execute o arquivo **`demo_cdc_cliente_sync.sql`**,
+responsável por configurar o ambiente de Change Data Capture (CDC).\
+Esse script cria a publicação e o *replication slot* (chamado
+`data_sync_slot`) utilizado para capturar alterações da tabela
+`db_loja.cliente`.
 
--   Conecta ao PostgreSQL e consome continuamente o slot lógico
-    `data_sync_slot`;
--   Parseia os eventos de `INSERT`, `UPDATE` e `DELETE` gerados pelo
-    plugin `test_decoding`;
--   Gera CSVs apenas com as **mudanças relevantes** (sem logs brutos);
--   Persiste os arquivos em `RAW/inc/date=YYYYMMDD/`;
--   Mantém um marcador (`_watermark.txt`) com o último LSN processado no
-    próprio MinIO.
-
-**Exemplo de destino:**
-
-    RAW/inc/date=20251103/cdc_20251103_101540.csv
-    RAW/inc/_watermark.txt
-
-### Execução contínua
-
-``` bash
-python src/cdc.py
-```
-
-O script permanece ativo, consultando o slot a cada 2 segundos.\
-Para encerrar, pressione `Ctrl + C`.
-
-### Pré-requisitos SQL
-
-Execute o script de demonstração para criar a publicação e o slot de
-replicação:
-
-``` sql
--- arquivo: query/demo_cdc_cliente_sync.sql
-```
+> Essa configuração permite que o processo de CDC receba automaticamente
+> as mudanças realizadas na base.
 
 ------------------------------------------------------------------------
 
-## 🧩 Estrutura Final no MinIO
+### 3️⃣ Etapa 3 -- Executar o pipeline de carga completa
 
-    RAW/
-    ├── full/
-    │   └── date=20251103/
-    │       └── full_clientes_20251103_101530.csv
-    └── inc/
-        ├── date=20251103/
-        │   └── cdc_20251103_101540.csv
-        └── _watermark.txt
+Após o banco estar configurado, execute o arquivo **`full_load.py`**.\
+Esse pipeline realiza a **carga inicial** dos dados da tabela
+`db_loja.cliente`, gravando um snapshot completo no bucket
+`RAW/full/date=YYYYMMDD/`.
+
+> O resultado será um arquivo CSV contendo todos os registros existentes
+> no momento da execução.
+
+------------------------------------------------------------------------
+
+### 4️⃣ Etapa 4 -- Executar o pipeline de CDC contínuo
+
+Com o *replication slot* ativo e a carga inicial concluída, execute o
+arquivo **`cdc.py`**.\
+Esse pipeline inicia a **captura contínua de alterações**, lendo os
+eventos de `INSERT`, `UPDATE` e `DELETE` a partir do slot e salvando
+apenas as mudanças (não os logs brutos) no bucket
+`RAW/inc/date=YYYYMMDD/`.
+
+> O arquivo `cdc.py` permanece em execução, monitorando constantemente o
+> banco e criando novos CSVs conforme as alterações ocorrem.
+
+------------------------------------------------------------------------
+
+### 5️⃣ Etapa 5 -- Verificar o resultado no MinIO
+
+Ao final, acesse o bucket `RAW` no MinIO.\
+Você deverá visualizar duas estruturas:
+
+-   **Carga completa (snapshot):**
+
+        RAW/full/date=YYYYMMDD/full_clientes_YYYYMMDD_HHMMSS.csv
+
+-   **Alterações capturadas (incremental):**
+
+        RAW/inc/date=YYYYMMDD/cdc_YYYYMMDD_HHMMSS.csv
+        RAW/inc/_watermark.txt
+
+Cada nova atualização na tabela `db_loja.cliente` resultará em um novo
+arquivo de mudanças na pasta `inc/`, refletindo apenas as alterações
+detectadas pelo CDC.
 
 ------------------------------------------------------------------------
 
@@ -167,7 +164,9 @@ replicação:
 
 ## 🧾 Critérios de Entrega (Checklist)
 
-✅ Screenshots do console MinIO com as pastas `RAW/full/` e `RAW/inc/`\
-✅ Script `full_load.py` executando snapshot inicial\
-✅ Script `cdc.py` executando CDC contínuo\
-✅ README.md completo com instruções e decisões técnicas
+✅ Scripts `Script-DDL-dbloja.sql` e `demo_cdc_cliente_sync.sql`
+executados em sequência\
+✅ `full_load.py` executado para captura completa\
+✅ `cdc.py` executando em modo contínuo\
+✅ Dados salvos nas estruturas `RAW/full/` e `RAW/inc/`\
+✅ README completo com instruções e decisões técnicas
